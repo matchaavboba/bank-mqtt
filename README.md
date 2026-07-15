@@ -123,4 +123,3 @@ Fraud Pub.       ─────────────────────
 **Shared Subscription** mendaftarkan Logger Worker 1 dan Worker 2 dalam grup yang sama. Broker otomatis membagi pesan di antara keduanya supaya tidak ada satu worker pun yang kewalahan sendirian.
 
 **Flow Control** membatasi berapa banyak pesan yang boleh diterima subscriber sekaligus sebelum dikonfirmasi. Alert Subscriber batasi 5 karena perlu proses tiap alert dengan serius. Dashboard batasi 50 karena cukup tampilkan data.# bank-mqtt
-# websocket-project
