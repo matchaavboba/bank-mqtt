@@ -171,7 +171,7 @@ app.get('/api/stats', (req, res) => res.json(stats));
 app.get('/api/alerts', (req, res) => res.json(stats.recentAlerts));
 app.get('/api/atm', (req, res) => res.json(stats.atmStatuses));
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log('╔══════════════════════════════════════════╗');
   console.log('║   🏦 BankWatch Dashboard                  ║');
