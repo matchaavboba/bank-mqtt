@@ -1,0 +1,24 @@
+{
+  "name": "banking-mqtt-monitor",
+  "version": "1.0.0",
+  "description": "BankWatch — Real-time Banking Transaction Monitor via MQTT",
+  "scripts": {
+    "broker:test":  "node config/broker-test.js",
+    "pub:atm":      "node publishers/atm-publisher.js",
+    "pub:transfer": "node publishers/transfer-publisher.js",
+    "pub:fraud":    "node publishers/fraud-publisher.js",
+    "sub:logger":   "node subscribers/logger-subscriber.js",
+    "sub:logger2":  "cross-env WORKER_ID=2 node subscribers/logger-subscriber.js",
+    "sub:alert":    "node subscribers/alert-subscriber.js",
+    "dashboard":    "node dashboard/server.js",
+    "start:all":    "node start-all.js"
+  },
+  "dependencies": {
+    "mqtt":      "^5.3.4",
+    "express":   "^4.18.0",
+    "ws":        "^8.16.0",
+    "chalk":     "^4.1.2",
+    "uuid":      "^9.0.0",
+    "cross-env": "^7.0.3"
+  }
+}

@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BankWatch — MQTT Banking Monitor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #04080f;
+      --surface: #0a1020;
+      --surface2: #0f1a2e;
+      --border: #1a2a42;
+      --accent: #00d4aa;
+      --accent2: #3b82f6;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --success: #22c55e;
+      --text: #e2e8f0;
+      --muted: #4a6080;
+      --gold: #fbbf24;
+    }
+    body { font-family: 'DM Mono', monospace; background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; }
+    body::before {
+      content: ''; position: fixed; inset: 0;
+      background: radial-gradient(ellipse at 20% 20%, rgba(0,212,170,0.04) 0%, transparent 60%),
+                  radial-gradient(ellipse at 80% 80%, rgba(59,130,246,0.04) 0%, transparent 60%);
+      pointer-events: none; z-index: 0;
+    }
+
+    /* ── HEADER ── */
+    header {
+      position: relative; z-index: 10;
+      padding: 16px 32px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: rgba(10,16,32,0.8); backdrop-filter: blur(10px);
+    }
+    .logo { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 800; }
+    .logo span { color: var(--accent); }
+    .header-badges { display: flex; gap: 10px; align-items: center; }
+    .badge {
+      padding: 5px 12px; border-radius: 100px; font-size: 11px; font-weight: 600;
+      border: 1px solid; display: flex; align-items: center; gap: 6px;
+    }
+    .badge-mqtt { border-color: rgba(0,212,170,0.3); color: var(--accent); background: rgba(0,212,170,0.08); }
+    .badge-ws   { border-color: rgba(59,130,246,0.3); color: var(--accent2); background: rgba(59,130,246,0.08); }
+    .dot { width: 6px; height: 6px; border-radius: 50%; animation: pulse 2s infinite; }
+    .dot-green  { background: var(--accent);  box-shadow: 0 0 6px var(--accent); }
+    .dot-blue   { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); }
+    .dot-red    { background: var(--danger);  box-shadow: 0 0 6px var(--danger); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* ── LAYOUT ── */
+    main { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 24px 32px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+    /* ── CARDS ── */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; transition: border-color 0.3s; }
+    .card:hover { border-color: rgba(0,212,170,0.2); }
+    .card.full  { grid-column: 1 / -1; }
+    .card.half  { grid-column: span 2; }
+    .card-title { font-family: 'Syne', sans-serif; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+    .tag { font-size: 9px; padding: 2px 7px; border-radius: 100px; font-weight: 700; letter-spacing: 1px; }
+    .tag-mqtt   { background: rgba(0,212,170,0.12); color: var(--accent); }
+    .tag-retain { background: rgba(251,191,36,0.12); color: var(--gold); }
+    .tag-qos    { background: rgba(59,130,246,0.12); color: var(--accent2); }
+    .tag-expiry { background: rgba(239,68,68,0.12); color: var(--danger); }
+    .tag-shared { background: rgba(167,139,250,0.12); color: #a78bfa; }
+
+    /* ── STAT BOXES ── */
+    .stat-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
+    .stat-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; text-align: center; }
+    .stat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+    .stat-value { font-size: 28px; font-weight: 300; margin-top: 4px; }
+    .stat-sub   { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+    /* ── PUBLISHER STATUS ── */
+    .pub-list { display: flex; flex-direction: column; gap: 8px; }
+    .pub-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; font-size: 11px; transition: all 0.3s; }
+    .pub-row.online  { border-color: rgba(34,197,94,0.2); }
+    .pub-row.offline { border-color: rgba(239,68,68,0.2); opacity: 0.6; }
+    .pub-name { font-weight: 600; flex: 1; }
+    .pub-time { color: var(--muted); font-size: 10px; }
+
+    /* ── FRAUD ALERT FEED ── */
+    .alert-feed { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+    .alert-item { padding: 10px 14px; border-radius: 9px; font-size: 11px; border: 1px solid; animation: slideIn 0.3s ease; }
+    .alert-item.CRITICAL { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); }
+    .alert-item.HIGH     { background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.25); }
+    .alert-item.MEDIUM   { background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.2); }
+    .alert-item.LOW      { background: rgba(34,197,94,0.06); border-color: rgba(34,197,94,0.15); }
+    .alert-sev  { font-weight: 700; font-family: 'Syne', sans-serif; }
+    .alert-time { color: var(--muted); font-size: 10px; }
+
+    /* ── TRANSACTION FEED ── */
+    .tx-feed { display: flex; flex-direction: column; gap: 5px; max-height: 250px; overflow-y: auto; }
+    .tx-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 10px; padding: 8px 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 7px; font-size: 11px; animation: slideIn 0.2s ease; }
+    .tx-suspicious { border-color: rgba(245,158,11,0.3) !important; }
+    .tx-type { font-weight: 600; }
+    .tx-amount { color: var(--accent); font-size: 12px; }
+    .tx-status-ok  { color: var(--success); }
+    .tx-status-err { color: var(--danger); }
+
+    /* ── ATM STATUS GRID ── */
+    .atm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr)); gap: 10px; }
+    .atm-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 12px; }
+    .atm-card.online  { border-color: rgba(0,212,170,0.2); }
+    .atm-card.offline { border-color: rgba(239,68,68,0.2); opacity: 0.5; }
+    .atm-id   { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px; }
+    .atm-loc  { font-size: 10px; color: var(--muted); margin: 3px 0; }
+    .atm-cash { font-size: 11px; }
+
+    /* ── CHART ── */
+    .chart-wrap { position: relative; height: 180px; }
+
+    /* ── FRAUD SCORE METER ── */
+    .score-meter { display: flex; align-items: center; gap: 12px; }
+    .score-bar-wrap { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+    .score-bar { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+
+    /* ── MQTT LOG ── */
+    .mqtt-log { background: #020810; border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; font-size: 10px; line-height: 1.9; height: 160px; overflow-y: auto; }
+    .log-pub    { color: var(--accent); }
+    .log-sub    { color: var(--accent2); }
+    .log-alert  { color: var(--danger); }
+    .log-retain { color: var(--gold); }
+    .log-muted  { color: var(--muted); }
+
+    /* ── EMPTY & MISC ── */
+    .empty { text-align: center; padding: 20px; color: var(--muted); font-size: 11px; }
+    @keyframes slideIn { from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:translateX(0)} }
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Bank<span>Watch</span> <span style="font-size:12px;font-weight:400;color:var(--muted);">MQTT Monitor</span></div>
+  <div class="header-badges">
+    <div class="badge badge-mqtt"><div class="dot dot-green" id="mqttDot"></div><span id="mqttStatus">Connecting...</span></div>
+    <div class="badge badge-ws"><div class="dot dot-blue"></div><span id="wsStatus">WS</span></div>
+    <div class="badge" style="border-color:rgba(74,96,128,0.3);color:var(--muted)" id="uptimeBadge">⏱ 0s</div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── STAT OVERVIEW ── -->
+  <div class="card full">
+    <div class="card-title">Live Statistics <span class="tag tag-mqtt">MQTT WILDCARD #</span></div>
+    <div class="stat-grid">
+      <div class="stat-box">
+        <div class="stat-label">Total Messages</div>
+        <div class="stat-value" id="statTotal" style="color:var(--accent)">0</div>
+        <div class="stat-sub">via bankwatch/#</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Fraud Alerts</div>
+        <div class="stat-value" id="statAlerts" style="color:var(--warning)">0</div>
+        <div class="stat-sub">QoS 2 + Expiry</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Critical Alerts</div>
+        <div class="stat-value" id="statCritical" style="color:var(--danger)">0</div>
+        <div class="stat-sub">Action required</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">High Value TX</div>
+        <div class="stat-value" id="statHighValue" style="color:var(--gold)">0</div>
+        <div class="stat-sub">QoS 2 guaranteed</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PUBLISHER STATUS ── -->
+  <div class="card">
+    <div class="card-title">Publisher Status <span class="tag tag-retain">RETAIN + LWT</span></div>
+    <div class="pub-list" id="pubList">
+      <div class="pub-row offline"><div class="dot dot-red"></div><div class="pub-name">ATM-PUBLISHER</div><div class="pub-time">Waiting...</div></div>
+      <div class="pub-row offline"><div class="dot dot-red"></div><div class="pub-name">TRANSFER-PUBLISHER</div><div class="pub-time">Waiting...</div></div>
+      <div class="pub-row offline"><div class="dot dot-red"></div><div class="pub-name">FRAUD-PUBLISHER</div><div class="pub-time">Waiting...</div></div>
+    </div>
+    <button onclick="requestPublisherInfo()" style="margin-top:12px;width:100%;padding:9px;background:rgba(0,212,170,0.1);border:1px solid rgba(0,212,170,0.2);border-radius:8px;color:var(--accent);font-size:11px;font-family:Syne,sans-serif;font-weight:700;cursor:pointer;">
+      ⚡ Request-Response Ping
+    </button>
+  </div>
+
+  <!-- ── FRAUD ALERT FEED ── -->
+  <div class="card half">
+    <div class="card-title">Fraud Alert Feed <span class="tag tag-expiry">QoS 2 + EXPIRY 30-60s</span></div>
+    <div class="alert-feed" id="alertFeed"><div class="empty">Waiting for alerts...</div></div>
+  </div>
+
+  <!-- ── TRANSACTION CHART ── -->
+  <div class="card">
+    <div class="card-title">Fraud Score Trend <span class="tag tag-mqtt">LIVE</span></div>
+    <div class="chart-wrap"><canvas id="fraudChart"></canvas></div>
+  </div>
+
+  <!-- ── ATM TRANSACTIONS ── -->
+  <div class="card half">
+    <div class="card-title">ATM Transaction Feed <span class="tag tag-qos">QoS 0/1/2 + TOPIC ALIAS</span></div>
+    <div class="tx-feed" id="txFeed"><div class="empty">Waiting for transactions...</div></div>
+  </div>
+
+  <!-- ── ATM STATUS ── -->
+  <div class="card full">
+    <div class="card-title">ATM Network Status <span class="tag tag-retain">RETAIN MESSAGE</span></div>
+    <div class="atm-grid" id="atmGrid"><div class="empty">Loading ATM statuses...</div></div>
+  </div>
+
+  <!-- ── MQTT LOG ── -->
+  <div class="card full">
+    <div class="card-title">MQTT Event Log <span class="tag tag-shared">SHARED SUBSCRIPTION</span> <span class="tag tag-mqtt">FLOW CONTROL</span></div>
+    <div class="mqtt-log" id="mqttLog"><span class="log-muted">// Connecting to broker.hivemq.com...</span></div>
+  </div>
+
+</main>
+
+<script>
+  // ── WebSocket to dashboard server ──────────────────────────────────────────
+  let ws = null;
+  let fraudScores = [];
+  let fraudLabels = [];
+  let chart = null;
+
+  function connect() {
+    ws = new WebSocket(`ws://${location.host}`);
+
+    ws.onopen = () => {
+      document.getElementById('wsStatus').textContent = 'WS Connected';
+      mqttLog('// WebSocket connected to dashboard server', 'muted');
+    };
+
+    ws.onclose = () => {
+      document.getElementById('wsStatus').textContent = 'WS Disconnected';
+      setTimeout(connect, 3000);
+    };
+
+    ws.onmessage = (e) => {
+      const { type, data, ts } = JSON.parse(e.data);
+      handleMessage(type, data, ts);
+    };
+  }
+
+  function handleMessage(type, data, ts) {
+    switch(type) {
+      case 'init':
+        updateStats(data.stats);
+        if (data.recentAlerts?.length) data.recentAlerts.forEach(a => addAlert(a));
+        if (data.recentTransactions?.length) data.recentTransactions.slice(0,10).forEach(t => addTx(t.data, t.topic));
+        updateATMGrid(data.atmStatuses);
+        updatePublisherStatus(data.stats.publisherStatus || {});
+        mqttLog('// Initial state loaded — RETAIN messages received', 'retain');
+        document.getElementById('mqttStatus').textContent = 'MQTT Connected';
+        break;
+
+      case 'atm_transaction':
+        addTx(data.data, data.topic);
+        if (data.isRetained) mqttLog(`[RETAIN] ATM status loaded: ${data.data.atm_id}`, 'retain');
+        else mqttLog(`[PUB] ATM TX: ${data.data.atm_id} | ${data.data.type} | Rp ${(data.data.amount||0).toLocaleString('id-ID')}`, 'pub');
+        break;
+
+      case 'atm_status':
+        updateSingleATM(data.data);
+        if (data.isRetained) mqttLog(`[RETAIN] ATM Status: ${data.data.atm_id} ONLINE`, 'retain');
+        break;
+
+      case 'transfer_domestic':
+        mqttLog(`[PUB] Domestic: ${data.data.from_city}→${data.data.to_city} Rp ${(data.data.amount||0).toLocaleString('id-ID')} ${data.data.is_high_value?'🔴 HIGH VALUE':''}`, 'pub');
+        break;
+
+      case 'transfer_international':
+        mqttLog(`[PUB] International: →${data.data.to_country} ${data.data.amount} ${data.data.currency}`, 'pub');
+        break;
+
+      case 'fraud_alert':
+        addAlert(data.data);
+        mqttLog(`[ALERT] ${data.data.severity} | ${data.data.pattern} @ ${data.data.location} | QoS2 + Expiry`, 'alert');
+        break;
+
+      case 'fraud_score':
+        addFraudScore(data.data.fraud_score);
+        break;
+
+      case 'system_status':
+        updatePublisherRow(data.data.publisher, data.data.status, data.isRetained);
+        mqttLog(`[${data.isRetained?'RETAIN':'PUB'}] ${data.data.publisher}: ${data.data.status}`, data.isRetained ? 'retain' : 'sub');
+        break;
+
+      case 'system_response':
+        mqttLog(`[RESPONSE] From ${data.data.publisher} — Request-Response OK ✓`, 'sub');
+        break;
+
+      case 'stats_update':
+        updateStats(data);
+        break;
+
+      case 'fraud_stats':
+        break;
+    }
+  }
+
+  // ── UI updaters ────────────────────────────────────────────────────────────
+
+  function updateStats(s) {
+    if (s.totalTransactions !== undefined) document.getElementById('statTotal').textContent = s.totalTransactions.toLocaleString();
+    if (s.fraudAlerts !== undefined) document.getElementById('statAlerts').textContent = s.fraudAlerts;
+    if (s.criticalAlerts !== undefined) document.getElementById('statCritical').textContent = s.criticalAlerts;
+    if (s.highValueTransfers !== undefined) document.getElementById('statHighValue').textContent = s.highValueTransfers;
+    if (s.uptime !== undefined) document.getElementById('uptimeBadge').textContent = `⏱ ${formatUptime(s.uptime)}`;
+    if (s.publisherStatus) updatePublisherStatus(s.publisherStatus);
+  }
+
+  function formatUptime(s) {
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+    return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  }
+
+  function addAlert(data) {
+    const feed = document.getElementById('alertFeed');
+    const empty = feed.querySelector('.empty');
+    if (empty) empty.remove();
+
+    const icons = { CRITICAL:'🚨', HIGH:'🔴', MEDIUM:'🟡', LOW:'🟢' };
+    const item = document.createElement('div');
+    item.className = `alert-item ${data.severity}`;
+    item.innerHTML = `
+      <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+        <span class="alert-sev">${icons[data.severity]||'🔔'} ${data.severity}</span>
+        <span class="alert-time">${new Date(data.timestamp).toLocaleTimeString('id-ID')}</span>
+      </div>
+      <div>${data.description}</div>
+      <div style="color:var(--muted);font-size:10px;margin-top:2px">${data.location} · Score: ${data.fraud_score}/100 · ${data.action}</div>`;
+    feed.insertBefore(item, feed.firstChild);
+    while (feed.children.length > 15) feed.removeChild(feed.lastChild);
+  }
+
+  function addTx(data, topic) {
+    const feed = document.getElementById('txFeed');
+    const empty = feed.querySelector('.empty');
+    if (empty) empty.remove();
+
+    const row = document.createElement('div');
+    row.className = 'tx-row' + (data.is_suspicious ? ' tx-suspicious' : '');
+    const amt = data.amount > 0 ? `Rp ${data.amount.toLocaleString('id-ID')}` : '-';
+    const statusCls = data.status === 'SUCCESS' ? 'tx-status-ok' : 'tx-status-err';
+    row.innerHTML = `
+      <span>${data.is_suspicious ? '⚠️' : '💳'}</span>
+      <span class="tx-type">${data.type || 'TX'} · ${data.atm_id || ''}</span>
+      <span class="tx-amount">${amt}</span>
+      <span class="${statusCls}">${data.status}</span>`;
+    feed.insertBefore(row, feed.firstChild);
+    while (feed.children.length > 30) feed.removeChild(feed.lastChild);
+  }
+
+  function updateATMGrid(atmStatuses) {
+    if (!atmStatuses || !Object.keys(atmStatuses).length) return;
+    const grid = document.getElementById('atmGrid');
+    grid.innerHTML = '';
+    Object.values(atmStatuses).forEach(atm => {
+      const card = document.createElement('div');
+      card.className = `atm-card ${atm.status === 'ONLINE' ? 'online' : 'offline'}`;
+      card.innerHTML = `
+        <div class="atm-id">${atm.atm_id}</div>
+        <div class="atm-loc">${atm.location}</div>
+        <div class="atm-cash" style="color:${(atm.cash_level||0) < 30 ? 'var(--danger)' : 'var(--accent)'}">
+          💵 Cash: ${atm.cash_level || 0}%
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">Zone: ${atm.zone}</div>`;
+      grid.appendChild(card);
+    });
+  }
+
+  function updateSingleATM(atm) {
+    updateATMGrid({ [atm.atm_id]: atm });
+  }
+
+  function updatePublisherStatus(statuses) {
+    if (!statuses) return;
+    Object.entries(statuses).forEach(([pub, info]) => {
+      updatePublisherRow(pub, info.status, info.isRetained);
+    });
+  }
+
+  function updatePublisherRow(pub, status, isRetained) {
+    if (!pub) return;
+    const list = document.getElementById('pubList');
+    let row = list.querySelector(`[data-pub="${pub}"]`);
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'pub-row';
+      row.dataset.pub = pub;
+      row.innerHTML = `<div class="dot"></div><div class="pub-name">${pub}</div><div class="pub-time"></div>`;
+      list.appendChild(row);
+    }
+    const isOnline = status === 'ONLINE';
+    row.className = `pub-row ${isOnline ? 'online' : 'offline'}`;
+    row.querySelector('.dot').className = `dot ${isOnline ? 'dot-green' : 'dot-red'}`;
+    row.querySelector('.pub-time').textContent = (isRetained ? '📌 ' : '') + new Date().toLocaleTimeString('id-ID');
+  }
+
+  // ── Fraud Chart ────────────────────────────────────────────────────────────
+
+  function initChart() {
+    const ctx = document.getElementById('fraudChart').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Fraud Score',
+          data: [],
+          borderColor: '#ef4444',
+          backgroundColor: 'rgba(239,68,68,0.1)',
+          borderWidth: 2,
+          tension: 0.4,
+          fill: true,
+          pointRadius: 2,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#4a6080', font: { size: 9 }, maxTicksLimit: 8 }, grid: { color: '#1a2a42' } },
+          y: { min: 0, max: 100, ticks: { color: '#4a6080', font: { size: 9 } }, grid: { color: '#1a2a42' } }
+        },
+        animation: { duration: 300 },
+      }
+    });
+  }
+
+  function addFraudScore(score) {
+    if (!chart) return;
+    const now = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    chart.data.labels.push(now);
+    chart.data.datasets[0].data.push(score);
+    if (chart.data.labels.length > 30) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
+    chart.update('none');
+  }
+
+  // ── MQTT Log ───────────────────────────────────────────────────────────────
+
+  function mqttLog(text, style = 'muted') {
+    const log = document.getElementById('mqttLog');
+    const line = document.createElement('div');
+    line.className = `log-${style}`;
+    const ts = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    line.textContent = `[${ts}] ${text}`;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+    while (log.children.length > 100) log.removeChild(log.firstChild);
+  }
+
+  // ── Request-Response ───────────────────────────────────────────────────────
+
+  function requestPublisherInfo() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'request_publisher_info' }));
+      mqttLog('// Request-Response: pinging all publishers...', 'sub');
+    }
+  }
+
+  // ── Uptime ticker ──────────────────────────────────────────────────────────
+  let uptimeSeconds = 0;
+  setInterval(() => {
+    uptimeSeconds++;
+    document.getElementById('uptimeBadge').textContent = `⏱ ${formatUptime(uptimeSeconds)}`;
+  }, 1000);
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  initChart();
+  connect();
+</script>
+</body>
+</html>
